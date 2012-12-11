@@ -103,6 +103,16 @@
                     withContext:(NSManagedObjectContext *)context
                           error:(NSError *__autoreleasing *)error;
 
+/**
+
+ */
+- (void)parseResponseObject:(id)responseObject
+               fromResponse:(NSHTTPURLResponse *)response
+                   ofEntity:(NSEntityDescription *)entity
+                  inContext:(NSManagedObjectContext *)context
+                      error:(NSError * __autoreleasing *)error
+            completionBlock:(void (^)(NSArray *fetchedObjects))completionBlock;
+
 @end
 
 #pragma mark -

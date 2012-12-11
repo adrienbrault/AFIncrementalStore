@@ -304,6 +304,57 @@ inline NSString * AFResourceIdentifierFromReferenceObject(id referenceObject) {
     }
 }
 
+- (void)parseResponseObject:(id)responseObject
+               fromResponse:(NSHTTPURLResponse *)response
+                   ofEntity:(NSEntityDescription *)entity
+                  inContext:(NSManagedObjectContext *)context
+                      error:(NSError * __autoreleasing *)error
+            completionBlock:(void (^)(NSArray *fetchedObjects))completionBlock
+{
+    id representationOrArrayOfRepresentations = [self.HTTPClient representationOrArrayOfRepresentationsFromResponseObject:responseObject];
+
+    NSManagedObjectContext *childContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
+    childContext.parentContext = context;
+    childContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy;
+
+    [childContext performBlockAndWait:^{
+        [self insertOrUpdateObjectsFromRepresentations:representationOrArrayOfRepresentations ofEntity:entity fromResponse:response withContext:childContext error:error completionBlock:^(NSArray *managedObjects, NSArray *backingObjects) {
+
+            if (![[self backingManagedObjectContext] save:error] || ![childContext save:error]) {
+                @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:[*error localizedFailureReason] userInfo:[NSDictionary dictionaryWithObject:*error forKey:NSUnderlyingErrorKey]];
+            }
+
+            NSSet *childObjects = [childContext registeredObjects];
+
+            for (NSManagedObject *childObject in childObjects) {
+                NSManagedObject *parentObject = [context objectWithID:childObject.objectID];
+                [parentObject.managedObjectContext refreshObject:parentObject mergeChanges:NO];
+            }
+
+            [context performBlockAndWait:^{
+                for (NSManagedObject *childObject in childObjects) {
+                    NSManagedObject *parentObject = [context objectWithID:childObject.objectID];
+                    [parentObject willChangeValueForKey:@"self"];
+                    [context refreshObject:parentObject mergeChanges:NO];
+                    [parentObject didChangeValueForKey:@"self"];
+                }
+            }];
+
+            NSMutableArray *fetchedObjects = [[NSMutableArray alloc] initWithCapacity:[managedObjects count]];
+            for (NSManagedObject *managedObject in managedObjects) {
+                NSManagedObject *fetchedObject = [context existingObjectWithID:managedObject.objectID error:NULL];
+                if (fetchedObject) {
+                    [fetchedObjects addObject:fetchedObject];
+                }
+            }
+
+            if (completionBlock) {
+                completionBlock(fetchedObjects);
+            }
+        }];
+    }];
+}
+
 - (id)executeFetchRequest:(NSFetchRequest *)fetchRequest
               withContext:(NSManagedObjectContext *)context
                     error:(NSError *__autoreleasing *)error
